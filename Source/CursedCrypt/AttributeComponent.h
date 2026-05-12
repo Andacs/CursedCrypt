@@ -1,10 +1,10 @@
-#pragma once
+ï»¿#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "AttributeComponent.generated.h"
 
-// Delegate Tanýmlarý
+// Delegate TanÄ±mlarÄ±
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnHealthChanged, AActor*, InstigatorActor, UAttributeComponent*, OwningComp, float, NewHealth, float, Delta);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnStaminaChanged, AActor*, InstigatorActor, UAttributeComponent*, OwningComp, float, NewStamina, float, Delta);
 
@@ -35,7 +35,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Attributes")
 	bool IsAlive() const { return Health > 0.f; }
 
-	// --- Ýþlem Fonksiyonlarý ---
+	// --- Ä°ÅŸlem FonksiyonlarÄ± ---
 	UFUNCTION(BlueprintCallable, Category = "Attributes")
 	bool ApplyDamage(AActor* InstigatorActor, float DamageAmount);
 
@@ -48,7 +48,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Attributes")
 	bool RestoreStamina(AActor* InstigatorActor, float Amount);
 
-	// --- MELEE SÝSTEMÝ (ORTAK HAFIZA) ---
+	// --- MELEE SÄ°STEMÄ° (ORTAK HAFIZA) ---
 	UPROPERTY()
 	TArray<AActor*> HitActorsDuringAttack;
 
@@ -73,7 +73,7 @@ protected:
 	UFUNCTION()
 	void OnRep_Stamina(float OldStamina);
 
-	// --- DEÐÝÞKENLER ---
+	// --- DEÄžÄ°ÅžKENLER ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Replicated, Category = "Attributes", meta = (ClampMin = "0.0"))
 	float MaxHealth = 100.f;
 
