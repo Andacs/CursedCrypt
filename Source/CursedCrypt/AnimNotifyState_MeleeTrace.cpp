@@ -1,4 +1,6 @@
 #include "AnimNotifyState_MeleeTrace.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "AttributeComponent.h"
@@ -16,13 +18,12 @@ void UAnimNotifyState_MeleeTrace::NotifyBegin(USkeletalMeshComponent* MeshComp, 
 {
     Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
-    // YAPAY ZEKA ÝÇÝN LÝSTE SIFIRLAMA:
+    // Reset hit list for AI attackers at the start of each attack.
+    // (Player's hit list is reset inside Server_Attack to avoid blend bugs)
     if (AActor* OwnerActor = MeshComp->GetOwner())
     {
         if (APawn* PawnOwner = Cast<APawn>(OwnerActor))
         {
-            // Eðer saldýran kiþi Yapay Zeka (AI) ise listeyi burada sýfýrla.
-            // (Oyuncunun listesi Server_Attack içinde sýfýrlanýr ki Blend bug'ý olmasýn)
             if (!PawnOwner->IsPlayerControlled())
             {
                 if (UAttributeComponent* Attr = OwnerActor->FindComponentByClass<UAttributeComponent>())
@@ -50,7 +51,7 @@ void UAnimNotifyState_MeleeTrace::NotifyTick(USkeletalMeshComponent* MeshComp, U
 
 bool UAnimNotifyState_MeleeTrace::DoSphereSweep(USkeletalMeshComponent* MeshComp, AActor* OwnerActor)
 {
-    // Saldýran kiþinin Attribute'u yoksa saldýramaz
+    // Attacker must have an Attribute Component to perform an attack.
     UAttributeComponent* OwnerAttr = OwnerActor->FindComponentByClass<UAttributeComponent>();
     if (!OwnerAttr) return false;
 
@@ -59,12 +60,12 @@ bool UAnimNotifyState_MeleeTrace::DoSphereSweep(USkeletalMeshComponent* MeshComp
         (StartLocation + (MeshComp->GetRightVector() * 60.f)) : MeshComp->GetSocketLocation(EndSocketName);
 
     TArray<AActor*> ActorsToIgnore;
-    ActorsToIgnore.Add(OwnerActor); // Kendimize vurmayalým
+    ActorsToIgnore.Add(OwnerActor); // Do not hit ourselves.
 
     TArray<FHitResult> OutHits;
 
     bool bHit = UKismetSystemLibrary::SphereTraceMulti(
-        MeshComp->GetWorld(), StartLocation, EndLocation, Radius,
+        MeshComp, StartLocation, EndLocation, Radius,
         UEngineTypes::ConvertToTraceType(ECC_Pawn), false,
         ActorsToIgnore, EDrawDebugTrace::None, OutHits, true
     );
@@ -76,24 +77,23 @@ bool UAnimNotifyState_MeleeTrace::DoSphereSweep(USkeletalMeshComponent* MeshComp
             AActor* HitActor = Hit.GetActor();
             if (!HitActor) continue;
 
-            // Dost Ateþi Korumasý
+            // Friendly fire protection: same class actors do not damage each other.
             if (OwnerActor->GetClass() == HitActor->GetClass()) continue;
 
-            // Düþmana bu saldýrýda henüz VURMADIYSAK:
+            // If we have not hit this actor yet in this attack:
             if (OwnerAttr->CanHitActor(HitActor))
             {
-                // 1. Listeye Ekle (Multi-hit engellenir)
+                // 1. Add to hit list (prevents multi-hit from a single swing)
                 OwnerAttr->AddToMeleeHitList(HitActor);
 
-                // 2. HASAR AYRIMI (Çifte hasarý ve tek atmayý engeller)
+                // 2. Apply damage: prefer our AttributeComponent system if target has one,
+                //    otherwise fall back to standard Blueprint damage (for pots, chests, etc.)
                 if (UAttributeComponent* HitAttr = HitActor->FindComponentByClass<UAttributeComponent>())
                 {
-                    // Hedefin bizim can sistemimiz varsa SADECE onu kullan (AI ve Oyuncular)
                     HitAttr->ApplyDamage(OwnerActor, Damage);
                 }
                 else
                 {
-                    // Hedefin bizim sistemimiz YOKSA standart Blueprint hasarýný vur (Çömlekler, Sandýklar vb.)
                     UGameplayStatics::ApplyDamage(HitActor, Damage, OwnerActor->GetInstigatorController(), OwnerActor, nullptr);
                 }
             }
