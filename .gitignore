@@ -46,3 +46,5 @@ Saved/
 .DS_Store
 Thumbs.db
 desktop.ini
+# Visual Studio auto-generated config
+.vsconfig
