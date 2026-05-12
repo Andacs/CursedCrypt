@@ -1,15 +1,17 @@
 #include "CCEnemyCharacter.h"
 #include "AttributeComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
 
 ACCEnemyCharacter::ACCEnemyCharacter()
 {
     PrimaryActorTick.bCanEverTick = true;
 
-    // Can bileþenini oluþtur
+    // Create the attribute component for health/stamina tracking.
     Attributes = CreateDefaultSubobject<UAttributeComponent>(TEXT("Attributes"));
 
-    // AI'nýn kýlýç darbesini almasý için Collision ayarý
+    // Allow AI to be hit by melee attacks via overlap on the Pawn channel.
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 }
 
@@ -22,14 +24,14 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
 {
     if (!TargetActor || !AttackMontage || !Attributes) return false;
 
-    // Can kontrolü
+    // Skip if dead.
     if (!Attributes->IsAlive()) return false;
 
-    // Mesafe Kontrolü
+    // Range check.
     const float Dist = FVector::Dist(TargetActor->GetActorLocation(), GetActorLocation());
     if (Dist > AttackRange) return false;
 
-    // Animasyon oynat
+    // Play attack montage.
     if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
     {
         AnimInstance->Montage_Play(AttackMontage);

@@ -23,7 +23,7 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	// --- BÝLEÞENLER ---
+	// --- Components ---
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	USpringArmComponent* CameraBoom;
 
@@ -33,7 +33,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attributes")
 	UAttributeComponent* Attributes;
 
-	// --- INPUT ---
+	// --- Input ---
 	UPROPERTY(EditAnywhere, Category = "Input")
 	UInputMappingContext* DefaultMappingContext;
 
@@ -49,7 +49,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Input")
 	UInputAction* IA_Attack;
 
-	// --- DÖVÜÞ ---
+	// --- Combat ---
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	UAnimMontage* AttackMontage;
 
@@ -59,17 +59,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float StaminaRegenRate = 10.f;
 
-	// --- FONKSÝYONLAR ---
+	// --- Input handlers ---
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 
 	void Attack();
 
-	// RPC: Sunucuda saldýrý onayý ve stamina harcama
+	// RPC: server-side attack validation and stamina consumption.
 	UFUNCTION(Server, Reliable)
 	void Server_Attack();
 
-	// RPC: Animasyonu herkese oynat
+	// RPC: play the attack animation on all clients.
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayAttackAnim();
 
@@ -77,12 +77,12 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	// --- SALDIRI KÝLÝDÝ (COOLDOWN) ---
+	// --- Attack cooldown ---
 	UPROPERTY(BlueprintReadOnly, Category = "Combat")
 	bool bIsAttacking = false;
 
 	FTimerHandle TimerHandle_AttackLock;
 
-	// Animasyon bitince kilidi açar
+	// Releases the attack lock when the montage finishes.
 	void ResetAttackLock() { bIsAttacking = false; }
 };

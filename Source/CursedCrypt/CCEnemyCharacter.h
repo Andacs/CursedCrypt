@@ -18,11 +18,11 @@ public:
 protected:
     virtual void BeginPlay() override;
 
-    // Hocanýn istediði Attribute bileþeni
+    // Attribute component (health, stamina, etc.)
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attributes")
     UAttributeComponent* Attributes;
 
-    // Saldýrý Ayarlarý
+    // Combat settings.
     UPROPERTY(EditAnywhere, Category = "Combat")
     UAnimMontage* AttackMontage;
 
@@ -30,7 +30,7 @@ protected:
     float AttackRange = 200.f;
 
 public:
-    // Yapay zekanýn saldýrý yapmasý için çaðrýlan fonksiyon
+    // Called by the AI to trigger a melee attack against the target actor.
     UFUNCTION(BlueprintCallable, Category = "Combat")
     bool TryAttack(AActor* TargetActor);
 };
