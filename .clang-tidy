@@ -1,0 +1,41 @@
+---
+# Clang-Tidy configuration for CursedCrypt (UE 5.6)
+# Static analysis rules tuned for Unreal Engine C++ code
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  performance-*,
+  -performance-avoid-endl,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-default-member-init,
+  readability-identifier-naming,
+  readability-redundant-member-init,
+  readability-redundant-string-init,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-init-variables,
+  misc-unused-parameters,
+  misc-unused-using-decls
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(?!.*(Intermediate|ThirdParty|Plugins)).*$'
+FormatStyle: file
+
+CheckOptions:
+  - key:   readability-identifier-naming.ClassPrefix
+    value: ''
+  - key:   readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key:   readability-identifier-naming.VariableCase
+    value: CamelCase
+  - key:   readability-identifier-naming.MemberCase
+    value: CamelCase
+  - key:   readability-identifier-naming.PrivateMemberPrefix
+    value: ''
+  - key:   readability-identifier-naming.ConstantCase
+    value: CamelCase
+  - key:   bugprone-assert-side-effect.AssertMacros
+    value: 'assert,check,checkSlow,ensure'
