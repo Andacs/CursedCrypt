@@ -1,0 +1,48 @@
+# ============================================
+# Unreal Engine generated folders
+# ============================================
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# ============================================
+# Visual Studio / Rider / IDE
+# ============================================
+.vs/
+.vscode/
+.idea/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.sln
+*.suo
+*.xcodeproj
+*.xcworkspace
+
+# ============================================
+# Marketplace assets (Drive'da tutuluyor)
+# ============================================
+/Content/ParagonGreystone/
+/Content/ParagonMinions/
+/Content/MedievalDungeon/
+/Content/AncientTreasures/
+
+# ============================================
+# UE template variants (kullanmıyorsan)
+# Eğer kullanıyorsan bu satırları sil
+# ============================================
+# /Content/Variant_Combat/
+# /Content/Variant_Platforming/
+# /Content/Variant_SideScrolling/
+# /Content/LevelPrototyping/
+# /Content/ThirdPerson/
+
+# ============================================
+# OS files
+# ============================================
+.DS_Store
+Thumbs.db
+desktop.ini
