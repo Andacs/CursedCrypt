@@ -1,4 +1,5 @@
 #include "AttributeComponent.h"
+#include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
 
 UAttributeComponent::UAttributeComponent()
