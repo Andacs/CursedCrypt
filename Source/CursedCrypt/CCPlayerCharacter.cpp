@@ -2,9 +2,15 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Camera/CameraComponent.h"
-#include "GameFramework/SpringArmComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Engine/LocalPlayer.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "AttributeComponent.h"
 #include "TimerManager.h"
 
@@ -56,7 +62,7 @@ void ACCPlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Stamina yenileme sadece sunucu tarafýnda yönetilir, sonuç replike edilir
+	// Stamina regen is server-authoritative; result is replicated to clients.
 	if (HasAuthority() && Attributes)
 	{
 		Attributes->RestoreStamina(this, StaminaRegenRate * DeltaTime);
@@ -106,7 +112,7 @@ void ACCPlayerCharacter::Attack()
 
 void ACCPlayerCharacter::Server_Attack_Implementation()
 {
-	// Kilit kontrolü
+	// Attack lock guard.
 	if (bIsAttacking) return;
 	if (!Attributes || !Attributes->IsAlive()) return;
 
@@ -114,12 +120,14 @@ void ACCPlayerCharacter::Server_Attack_Implementation()
 	{
 		bIsAttacking = true;
 
-		// OYUNCU ÝÇÝN LÝSTE SIFIRLAMA: Sadece saldýrý baþladýðýnda 1 kere yapýlýr
+		// Reset the melee hit list once per attack (player path).
+		// Server_Attack is the single entry point so this avoids the blend-bug
+		// seen when resetting from inside the animation notify.
 		Attributes->ResetMeleeHitList();
 
 		Multicast_PlayAttackAnim();
 
-		float AnimDuration = AttackMontage ? AttackMontage->GetPlayLength() : 1.0f;
+		const float AnimDuration = AttackMontage ? AttackMontage->GetPlayLength() : 1.0f;
 		GetWorldTimerManager().SetTimer(TimerHandle_AttackLock, this, &ACCPlayerCharacter::ResetAttackLock, AnimDuration, false);
 	}
 }

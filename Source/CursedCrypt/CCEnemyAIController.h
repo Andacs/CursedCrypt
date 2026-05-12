@@ -17,7 +17,7 @@ public:
 protected:
     virtual void BeginPlay() override;
 
-    // Unreal içinden BT dosyasýný seçebilmen için
+    // Behavior Tree asset to be assigned in the Unreal Editor.
     UPROPERTY(EditDefaultsOnly, Category = "AI")
     UBehaviorTree* BehaviorTreeAsset;
 
