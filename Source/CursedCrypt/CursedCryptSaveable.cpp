@@ -33,3 +33,12 @@ bool UCursedCryptSaveableLibrary::ParsePlayerSaveData(
 
     return bHasAll;
 }
+
+FString UCursedCryptSaveableLibrary::FormatPlayerSaveData(const FString& Id, float X, float Y, float Z, float HP)
+{
+    // FString::Printf uses C locale (invariant), so '.' is always the decimal separator.
+    // This is critical because BP's Format Text uses system locale and produces invalid
+    // JSON on non-English locales (e.g. Turkish: 1.234 -> "1,234").
+    return FString::Printf(TEXT("{\"id\":\"%s\",\"x\":%f,\"y\":%f,\"z\":%f,\"hp\":%f}"),
+        *Id, X, Y, Z, HP);
+}

@@ -74,4 +74,17 @@ public:
      */
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Save System")
     static bool ParsePlayerSaveData(const FString& JsonData, float& X, float& Y, float& Z, float& HP);
+
+    /**
+     * Format player save data into a locale-invariant JSON string.
+     * Uses FString::Printf which always emits '.' as decimal separator,
+     * regardless of system locale (critical: Turkish Windows uses ',' by default).
+     *
+     * @param Id   Saveable identifier (e.g. "Player_01")
+     * @param X,Y,Z Position coordinates
+     * @param HP   Health value
+     * @return     JSON string like {"id":"Player_01","x":1234.5,"y":-567.8,"z":98.2,"hp":75.0}
+     */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Save System")
+    static FString FormatPlayerSaveData(const FString& Id, float X, float Y, float Z, float HP);
 };

@@ -48,6 +48,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Attributes")
 	bool RestoreStamina(AActor* InstigatorActor, float Amount);
 
+	// Sets health to an absolute value. Used by the save/load system to restore
+	// state without damage/heal semantics. Server-authoritative; clients receive
+	// the update via OnRep_Health replication.
+	UFUNCTION(BlueprintCallable, Category = "Attributes")
+	void SetHealth(float NewHealth);
+
 	// --- MELEE SİSTEMİ (ORTAK HAFIZA) ---
 	UPROPERTY()
 	TArray<AActor*> HitActorsDuringAttack;
