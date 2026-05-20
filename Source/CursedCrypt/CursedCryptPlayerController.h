@@ -11,25 +11,25 @@ class UUserWidget;
 
 /**
  *  Basic PlayerController class for a third person game
- *  Manages input mappings
+ *  Manages input mappings and save/load test keybinds.
  */
-UCLASS(abstract)
+UCLASS()
 class ACursedCryptPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+
 protected:
 
 	/** Input Mapping Contexts */
-	UPROPERTY(EditAnywhere, Category ="Input|Input Mappings")
+	UPROPERTY(EditAnywhere, Category = "Input|Input Mappings")
 	TArray<UInputMappingContext*> DefaultMappingContexts;
 
 	/** Input Mapping Contexts */
-	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
+	UPROPERTY(EditAnywhere, Category = "Input|Input Mappings")
 	TArray<UInputMappingContext*> MobileExcludedMappingContexts;
 
 	/** Mobile controls widget to spawn */
-	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
+	UPROPERTY(EditAnywhere, Category = "Input|Touch Controls")
 	TSubclassOf<UUserWidget> MobileControlsWidgetClass;
 
 	/** Pointer to the mobile controls widget */
@@ -41,4 +41,9 @@ protected:
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
 
+	/** Handles save key press: triggers async save via CursedCryptSaveSubsystem. */
+	void HandleSaveKey();
+
+	/** Handles load key press: triggers async load via CursedCryptSaveSubsystem. */
+	void HandleLoadKey();
 };
