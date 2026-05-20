@@ -102,3 +102,25 @@ bool UAttributeComponent::RestoreStamina(AActor* InstigatorActor, float Amount)
 	OnStaminaChanged.Broadcast(InstigatorActor, this, Stamina, Delta);
 	return true;
 }
+
+void UAttributeComponent::SetHealth(float NewHealth)
+{
+	// Only server can authoritatively set health; clients will receive via OnRep_Health
+	if (!GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	const float OldHealth = Health;
+	Health = FMath::Clamp(NewHealth, 0.f, MaxHealth);
+	const float Delta = Health - OldHealth;
+
+	if (FMath::IsNearlyZero(Delta))
+	{
+		return;
+	}
+
+	// Broadcast on server so server-side listeners (HUD on listen-server) update.
+	// Clients update via OnRep_Health automatically.
+	OnHealthChanged.Broadcast(nullptr, this, Health, Delta);
+}
