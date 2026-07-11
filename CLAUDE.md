@@ -62,3 +62,10 @@ Player-affecting actions follow a server-RPC-then-multicast pattern: validate an
 - Prefer full-file delivery over partial diffs when writing C++, unless the user asks for a diff.
 - Ask clarifying questions only when truly ambiguous — don't over-ask.
 - Git workflow: feature branches off develop, PR back into develop; no direct push to main/develop.
+
+## Code Migration Policy
+
+- Yeni yazılacak her şey → C++ default. UI wiring, basit event binding gibi zorunlu Blueprint katmanları hariç (Widget binding'ler, montage/anim event'ler, level'a aktör yerleştirme gibi UE'nin doğası gereği BP gerektiren yerler).
+- Çalışan mevcut sistemler (karakter, envanter, co-op sync, AI temel davranış) → dokunma. Bunlar zaten test edilmiş, çalışıyor. "Daha hızlı olsun" diye şimdi ellemek risk/fayda açısından mantıksız — MVP bitene kadar post-launch listesine yazıyorum.
+- İstisna: Bir BP sisteminde gerçek, ölçülmüş bir performans sorunu varsa (profiler'da görülen tick maliyeti, çok sayıda actor'da yavaşlama gibi) o zaman spesifik olarak o sistemi C++'a taşırız — genel "daha iyi olur" hissiyle değil, kanıtla.
+- AI-Barricade sistemi zaten bu kuralın ilk uygulama alanı olacak — BTS_CheckPathToTarget/BTT_AttackBarricade gibi henüz stabilize olmamış parçaları C++'a çekmek mantıklı, çünkü zaten üzerinde çalışıyoruz ve tick'te path query yapıyor (performans-kritik).
