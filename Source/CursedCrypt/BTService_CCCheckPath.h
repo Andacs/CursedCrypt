@@ -48,9 +48,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Detection", meta = (ClampMin = "100.0"))
 	float MaxObstacleCheckDistance = 1500.0f;
 
-	/** Enable visual debug lines and spheres during PIE. */
+	/** Radius around Player and Enemy to search for breakables enclosing or near them. */
+	UPROPERTY(EditAnywhere, Category = "Detection", meta = (ClampMin = "100.0"))
+	float ObstacleSearchRadius = 1000.0f;
+
+	/** Enable visual debug messages on screen during PIE. */
 	UPROPERTY(EditAnywhere, Category = "Debug")
-	bool bShowDebugDraw = false;
+	bool bShowDebugDraw = true;
 
 private:
 	/** Finds the closest breakable actor obstructing the path to TargetActor. */

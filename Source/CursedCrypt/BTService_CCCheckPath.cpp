@@ -86,9 +86,9 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, TargetActor, PathResult);
 
 	float BreakTime = FLT_MAX;
+	float ObstacleHealth = 100.0f;
 	if (BlockingObstacle)
 	{
-		float ObstacleHealth = 100.0f;
 		IsActorBreakable(BlockingObstacle, ObstacleHealth);
 
 		const float DPS = FMath::Max(1.0f, DefaultEnemyDPS);
@@ -156,13 +156,33 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 #if WITH_EDITOR
-	if (bShowDebugDraw)
+	if (bShowDebugDraw && GEngine)
 	{
+		FColor StatusColor = FColor::Green;
+		FString StatusText = TEXT("DETOUR_TO_PLAYER");
+
+		if (!bHasCompletePath)
+		{
+			StatusColor = FColor::Red;
+			StatusText = FString::Printf(TEXT("FULL_BLOCK -> %s"),
+				BlockingObstacle ? *FString::Printf(TEXT("ATTACK BARRICADE [%s] (HP: %.0f)"), *BlockingObstacle->GetName(), ObstacleHealth) : TEXT("NO BREAKABLE FOUND"));
+		}
+		else if (BlockingObstacle && BreakTime < (DetourTime - TimeTolerance))
+		{
+			StatusColor = FColor::Orange;
+			StatusText = FString::Printf(TEXT("BREAK SHORTCUT [%s] (T_break: %.1fs < T_detour: %.1fs)"),
+				*BlockingObstacle->GetName(), BreakTime, DetourTime);
+		}
+		else
+		{
+			StatusColor = FColor::Green;
+			StatusText = FString::Printf(TEXT("DETOUR TO PLAYER (T_detour: %.1fs <= T_break: %.1fs)"),
+				DetourTime, (BreakTime < FLT_MAX) ? BreakTime : -1.0f);
+		}
+
 		GEngine->AddOnScreenDebugMessage(
-			INDEX_NONE, 0.5f, FColor::Cyan,
-			FString::Printf(TEXT("[CC PathCost] DetourTime: %.2fs | BreakTime: %.2fs | Blocker: %s"),
-				DetourTime, BreakTime,
-				BlockingObstacle ? *BlockingObstacle->GetName() : TEXT("None"))
+			102938, 0.6f, StatusColor,
+			FString::Printf(TEXT("[CC AI PathCost] %s"), *StatusText)
 		);
 	}
 #endif
@@ -174,27 +194,56 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 	if (!World) return nullptr;
 
 	TArray<AActor*> Candidates;
-	TArray<AActor*> IgnoredActors;
-	IgnoredActors.Add(ControlledPawn);
-	IgnoredActors.Add(TargetActor);
+	FCollisionQueryParams CollisionParams(SCENE_QUERY_STAT(CCCheckPath), false);
+	CollisionParams.AddIgnoredActor(ControlledPawn);
+	CollisionParams.AddIgnoredActor(TargetActor);
 
-	// A. Check around the terminal reachable point if NavPath exists
+	FCollisionObjectQueryParams ObjectQueryParams(FCollisionObjectQueryParams::AllObjects);
+
+	const FVector PawnLoc = ControlledPawn->GetActorLocation();
+	const FVector TargetLoc = TargetActor->GetActorLocation();
+
+	// 1. Search around TargetActor (catches barricades enclosing or guarding the player)
+	TArray<FOverlapResult> TargetOverlaps;
+	World->OverlapMultiByObjectType(
+		TargetOverlaps, TargetLoc, FQuat::Identity,
+		ObjectQueryParams, FCollisionShape::MakeSphere(ObstacleSearchRadius), CollisionParams
+	);
+	for (const FOverlapResult& Overlap : TargetOverlaps)
+	{
+		if (Overlap.GetActor() && !Candidates.Contains(Overlap.GetActor()))
+		{
+			Candidates.Add(Overlap.GetActor());
+		}
+	}
+
+	// 2. Search around ControlledPawn (catches barricades right in front of the enemy)
+	TArray<FOverlapResult> PawnOverlaps;
+	World->OverlapMultiByObjectType(
+		PawnOverlaps, PawnLoc, FQuat::Identity,
+		ObjectQueryParams, FCollisionShape::MakeSphere(ObstacleSearchRadius), CollisionParams
+	);
+	for (const FOverlapResult& Overlap : PawnOverlaps)
+	{
+		if (Overlap.GetActor() && !Candidates.Contains(Overlap.GetActor()))
+		{
+			Candidates.Add(Overlap.GetActor());
+		}
+	}
+
+	// 3. Search around terminal point of partial path (if any)
 	if (PathResult.Path.IsValid() && PathResult.Path->GetPathPoints().Num() > 0)
 	{
 		const TArray<FNavPathPoint>& PathPoints = PathResult.Path->GetPathPoints();
 		const FVector PathEnd = PathPoints.Last().Location;
-		const FVector DirToTarget = (TargetActor->GetActorLocation() - PathEnd).GetSafeNormal();
-		const FVector SweepEnd = PathEnd + (DirToTarget * 350.0f);
+		const FVector DirToTarget = (TargetLoc - PathEnd).GetSafeNormal();
+		const FVector SweepEnd = PathEnd + (DirToTarget * 400.0f);
 
 		TArray<FHitResult> SweepHits;
-		UKismetSystemLibrary::SphereTraceMulti(
-			World, PathEnd, SweepEnd, ObstacleDetectionRadius,
-			UEngineTypes::ConvertToTraceType(ECC_WorldDynamic), false,
-			IgnoredActors,
-			bShowDebugDraw ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
-			SweepHits, true
+		World->SweepMultiByObjectType(
+			SweepHits, PathEnd, SweepEnd, FQuat::Identity,
+			ObjectQueryParams, FCollisionShape::MakeSphere(ObstacleDetectionRadius), CollisionParams
 		);
-
 		for (const FHitResult& Hit : SweepHits)
 		{
 			if (Hit.GetActor() && !Candidates.Contains(Hit.GetActor()))
@@ -202,24 +251,31 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 				Candidates.Add(Hit.GetActor());
 			}
 		}
+
+		TArray<FOverlapResult> PathEndOverlaps;
+		World->OverlapMultiByObjectType(
+			PathEndOverlaps, PathEnd, FQuat::Identity,
+			ObjectQueryParams, FCollisionShape::MakeSphere(ObstacleDetectionRadius * 1.5f), CollisionParams
+		);
+		for (const FOverlapResult& Overlap : PathEndOverlaps)
+		{
+			if (Overlap.GetActor() && !Candidates.Contains(Overlap.GetActor()))
+			{
+				Candidates.Add(Overlap.GetActor());
+			}
+		}
 	}
 
-	// B. Direct corridor sweep from Pawn to Target (covers disconnected NavMesh islands)
-	const FVector PawnLoc = ControlledPawn->GetActorLocation();
-	const FVector TargetLoc = TargetActor->GetActorLocation();
+	// 4. Direct corridor sweep between Pawn and Target
 	const FVector RayDir = (TargetLoc - PawnLoc).GetSafeNormal();
 	const float MaxDist = FMath::Min(FVector::Dist(PawnLoc, TargetLoc), MaxObstacleCheckDistance);
 	const FVector RayEnd = PawnLoc + (RayDir * MaxDist);
 
 	TArray<FHitResult> CorridorHits;
-	UKismetSystemLibrary::SphereTraceMulti(
-		World, PawnLoc, RayEnd, ObstacleDetectionRadius,
-		UEngineTypes::ConvertToTraceType(ECC_WorldDynamic), false,
-		IgnoredActors,
-		bShowDebugDraw ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
-		CorridorHits, true
+	World->SweepMultiByObjectType(
+		CorridorHits, PawnLoc, RayEnd, FQuat::Identity,
+		ObjectQueryParams, FCollisionShape::MakeSphere(ObstacleDetectionRadius), CollisionParams
 	);
-
 	for (const FHitResult& Hit : CorridorHits)
 	{
 		if (Hit.GetActor() && !Candidates.Contains(Hit.GetActor()))
@@ -228,37 +284,20 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		}
 	}
 
-	// Also trace WorldStatic in case barricade or door uses WorldStatic
-	TArray<FHitResult> StaticHits;
-	UKismetSystemLibrary::SphereTraceMulti(
-		World, PawnLoc, RayEnd, ObstacleDetectionRadius,
-		UEngineTypes::ConvertToTraceType(ECC_WorldStatic), false,
-		IgnoredActors,
-		bShowDebugDraw ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
-		StaticHits, true
-	);
-
-	for (const FHitResult& Hit : StaticHits)
-	{
-		if (Hit.GetActor() && !Candidates.Contains(Hit.GetActor()))
-		{
-			Candidates.Add(Hit.GetActor());
-		}
-	}
-
-	// C. Find the closest alive breakable obstacle to ControlledPawn
+	// 5. Filter for alive breakable obstacles and pick the closest to the Pawn
 	AActor* BestObstacle = nullptr;
-	float ClosestDistSq = FLT_MAX;
+	float BestCost = FLT_MAX;
 
 	for (AActor* Candidate : Candidates)
 	{
 		float ObstacleHP = 0.0f;
 		if (IsActorBreakable(Candidate, ObstacleHP))
 		{
-			const float DistSq = FVector::DistSquared(PawnLoc, Candidate->GetActorLocation());
-			if (DistSq < ClosestDistSq)
+			const FVector CandLoc = Candidate->GetActorLocation();
+			const float Cost = FVector::Dist(PawnLoc, CandLoc) + (FVector::Dist(CandLoc, TargetLoc) * 0.5f);
+			if (Cost < BestCost)
 			{
-				ClosestDistSq = DistSq;
+				BestCost = Cost;
 				BestObstacle = Candidate;
 			}
 		}
@@ -285,6 +324,14 @@ bool UBTService_CCCheckPath::IsActorBreakable(AActor* CandidateActor, float& Out
 
 	// 2. Fallback: Check BPI_Combat interface function "TakeHit"
 	if (CandidateActor->FindFunction(TEXT("TakeHit")))
+	{
+		OutHealth = 100.0f;
+		return true;
+	}
+
+	// 3. Fallback: Check actor tags or class name
+	if (CandidateActor->ActorHasTag(TEXT("Barricade")) || CandidateActor->ActorHasTag(TEXT("Breakable")) ||
+		CandidateActor->GetName().Contains(TEXT("Barricade")))
 	{
 		OutHealth = 100.0f;
 		return true;
