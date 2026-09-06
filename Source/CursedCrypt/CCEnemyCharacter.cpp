@@ -27,11 +27,20 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
     // Skip if dead.
     if (!Attributes->IsAlive()) return false;
 
-    // Range check.
-    const float Dist = FVector::Dist(TargetActor->GetActorLocation(), GetActorLocation());
-    if (Dist > AttackRange) return false;
+    // Range check using closest point on target bounding box (handles large barricades/tables)
+    FVector Origin, Extents;
+    TargetActor->GetActorBounds(true, Origin, Extents);
+    const FVector ClosestPoint = FMath::ClosestPointOnBoxToPoint(GetActorLocation(), Origin, Extents);
+    const float DistToSurface = FVector::Dist(GetActorLocation(), ClosestPoint);
+    const float DistToCenter = FVector::Dist(TargetActor->GetActorLocation(), GetActorLocation());
 
-    // Line of sight check: do not attack through solid walls
+    const float EffectiveRange = FMath::Max(AttackRange, 250.0f);
+    if (DistToSurface > EffectiveRange && DistToCenter > (EffectiveRange + Extents.GetMax()))
+    {
+        return false;
+    }
+
+    // Line of sight check: do not attack through solid unbreakable walls
     if (UWorld* World = GetWorld())
     {
         FHitResult Hit;
@@ -40,20 +49,26 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
         TraceParams.AddIgnoredActor(TargetActor);
 
         const FVector EyeLoc = GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
-        const FVector TargetCenter = TargetActor->GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
+        const FVector TraceEnd = ClosestPoint + FVector(0.0f, 0.0f, 30.0f);
 
-        if (World->LineTraceSingleByChannel(Hit, EyeLoc, TargetCenter, ECC_Visibility, TraceParams))
+        if (World->LineTraceSingleByChannel(Hit, EyeLoc, TraceEnd, ECC_Visibility, TraceParams))
         {
-            // Blocked by a solid wall/geometry between attacker and target
-            return false;
+            AActor* HitActor = Hit.GetActor();
+            if (HitActor && !HitActor->ActorHasTag(TEXT("Barricade")) && !HitActor->ActorHasTag(TEXT("Breakable")) && !HitActor->GetName().Contains(TEXT("Barricade")))
+            {
+                return false;
+            }
         }
     }
 
     // Play attack montage.
     if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
     {
-        AnimInstance->Montage_Play(AttackMontage);
-        return true;
+        if (!AnimInstance->Montage_IsPlaying(AttackMontage))
+        {
+            AnimInstance->Montage_Play(AttackMontage);
+            return true;
+        }
     }
 
     return false;

@@ -8,6 +8,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "DrawDebugHelpers.h"
 #include "AttributeComponent.h"
+#include "CCEnemyCharacter.h"
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 
@@ -146,8 +147,28 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		}
 	};
 
-	// Condition 1: No complete detour path exists (full block / dead-end)
-	if (!bHasCompletePath)
+	// Proximity check: If the enemy is already in front of a blocking obstacle (within 250 units), prioritize breaking it!
+	bool bInMeleeRangeOfObstacle = false;
+	if (BlockingObstacle && IsValid(BlockingObstacle))
+	{
+		FVector ObsOrigin, ObsExtents;
+		BlockingObstacle->GetActorBounds(true, ObsOrigin, ObsExtents);
+		const FVector ClosestObsPt = FMath::ClosestPointOnBoxToPoint(StartLoc, ObsOrigin, ObsExtents);
+		const float DistToObs = FVector::Dist(StartLoc, ClosestObsPt);
+
+		if (DistToObs <= 250.0f)
+		{
+			bInMeleeRangeOfObstacle = true;
+			// Trigger melee attack immediately so enemy doesn't get stuck in MoveTo
+			if (ACCEnemyCharacter* EnemyChar = Cast<ACCEnemyCharacter>(ControlledPawn))
+			{
+				EnemyChar->TryAttack(BlockingObstacle);
+			}
+		}
+	}
+
+	// Condition 1: No complete detour path exists OR enemy is already in front of the barricade
+	if (!bHasCompletePath || bInMeleeRangeOfObstacle)
 	{
 		ApplyDecision(BlockingObstacle);
 		return;
@@ -265,7 +286,23 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		}
 	}
 
-	// 3. Search around terminal point of partial path (if any)
+	// 3. Forward sweep in front of the enemy (catches barricades directly in face within 350cm)
+	const FVector PawnForward = ControlledPawn->GetActorForwardVector();
+	const FVector PawnForwardEnd = PawnLoc + (PawnForward * 350.0f);
+	TArray<FHitResult> FaceHits;
+	World->SweepMultiByObjectType(
+		FaceHits, PawnLoc, PawnForwardEnd, FQuat::Identity,
+		ObjectQueryParams, FCollisionShape::MakeSphere(100.0f), CollisionParams
+	);
+	for (const FHitResult& Hit : FaceHits)
+	{
+		if (Hit.GetActor() && !Candidates.Contains(Hit.GetActor()))
+		{
+			Candidates.Add(Hit.GetActor());
+		}
+	}
+
+	// 4. Search around terminal point of partial path (if any)
 	if (PathResult.Path.IsValid() && PathResult.Path->GetPathPoints().Num() > 0)
 	{
 		const TArray<FNavPathPoint>& PathPoints = PathResult.Path->GetPathPoints();
@@ -300,7 +337,7 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		}
 	}
 
-	// 4. Direct corridor sweep between Pawn and Target
+	// 5. Direct corridor sweep between Pawn and Target
 	const FVector RayDir = (TargetLoc - PawnLoc).GetSafeNormal();
 	const float MaxDist = FMath::Min(FVector::Dist(PawnLoc, TargetLoc), MaxObstacleCheckDistance);
 	const FVector RayEnd = PawnLoc + (RayDir * MaxDist);
@@ -318,7 +355,7 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		}
 	}
 
-	// 5. Filter for alive breakable obstacles and pick the closest to the Pawn
+	// 6. Filter for alive breakable obstacles and pick the best obstacle
 	AActor* BestObstacle = nullptr;
 	float BestCost = FLT_MAX;
 
@@ -327,27 +364,31 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		float ObstacleHP = 0.0f;
 		if (IsActorBreakable(Candidate, ObstacleHP))
 		{
-			const FVector CandLoc = Candidate->GetActorLocation();
+			FVector ObsOrigin, ObsExtents;
+			Candidate->GetActorBounds(true, ObsOrigin, ObsExtents);
+			const FVector ClosestPt = FMath::ClosestPointOnBoxToPoint(PawnLoc, ObsOrigin, ObsExtents);
+			const float DistFromPawn = FVector::Dist(PawnLoc, ClosestPt);
+			const float DistToTarget = FVector::Dist(ClosestPt, TargetLoc);
 
 			// Wall Check: Ensure candidate is not walled off behind an impenetrable static wall from both sides!
 			FHitResult LosHit;
-			FCollisionQueryParams LosParams(SCENE_QUERY_STAT(CheckBarricadeLOS), false);
-			LosParams.AddIgnoredActor(Candidate);
-			LosParams.AddIgnoredActor(ControlledPawn);
+			FCollisionQueryParams LosPawn(SCENE_QUERY_STAT(CheckBarricadePawnLOS), false);
+			LosPawn.AddIgnoredActor(Candidate);
+			LosPawn.AddIgnoredActor(ControlledPawn);
 
-			const FVector CandEye = CandLoc + FVector(0.0f, 0.0f, 50.0f);
+			const FVector CandEye = ClosestPt + FVector(0.0f, 0.0f, 50.0f);
 			const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
 			const FVector TargetEye = TargetLoc + FVector(0.0f, 0.0f, 50.0f);
 
-			const bool bBlockedFromPawn = World->LineTraceSingleByChannel(
-				LosHit, CandEye, PawnEye, ECC_Visibility, LosParams
+			const bool bBlockedFromPawn = (DistFromPawn > 250.0f) && World->LineTraceSingleByChannel(
+				LosHit, CandEye, PawnEye, ECC_Visibility, LosPawn
 			);
 
-			LosParams.ClearIgnoredActors();
-			LosParams.AddIgnoredActor(Candidate);
-			LosParams.AddIgnoredActor(TargetActor);
+			FCollisionQueryParams LosTarget(SCENE_QUERY_STAT(CheckBarricadeTargetLOS), false);
+			LosTarget.AddIgnoredActor(Candidate);
+			LosTarget.AddIgnoredActor(TargetActor);
 			const bool bBlockedFromTarget = World->LineTraceSingleByChannel(
-				LosHit, CandEye, TargetEye, ECC_Visibility, LosParams
+				LosHit, CandEye, TargetEye, ECC_Visibility, LosTarget
 			);
 
 			// If candidate is behind solid walls from BOTH Pawn and Target, it belongs to another room/corridor!
@@ -356,7 +397,13 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 				continue;
 			}
 
-			const float Cost = FVector::Dist(PawnLoc, CandLoc) + (FVector::Dist(CandLoc, TargetLoc) * 0.5f);
+			// If obstacle is right in front of the enemy, drastically lower cost so it is picked first
+			float Cost = DistFromPawn + (DistToTarget * 0.5f);
+			if (DistFromPawn <= 250.0f)
+			{
+				Cost = DistFromPawn * 0.05f; // Absolute priority!
+			}
+
 			if (Cost < BestCost)
 			{
 				BestCost = Cost;
