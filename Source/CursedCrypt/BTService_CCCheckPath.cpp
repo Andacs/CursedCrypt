@@ -9,6 +9,7 @@
 #include "DrawDebugHelpers.h"
 #include "AttributeComponent.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 
 UBTService_CCCheckPath::UBTService_CCCheckPath()
 {
