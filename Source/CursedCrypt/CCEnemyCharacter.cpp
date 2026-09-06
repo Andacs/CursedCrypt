@@ -30,7 +30,8 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
     // Range check using closest point on target bounding box (handles large barricades/tables)
     FVector Origin, Extents;
     TargetActor->GetActorBounds(true, Origin, Extents);
-    const FVector ClosestPoint = FMath::ClosestPointOnBoxToPoint(GetActorLocation(), Origin, Extents);
+    const FBox TargetBox(Origin - Extents, Origin + Extents);
+    const FVector ClosestPoint = TargetBox.GetClosestPointTo(GetActorLocation());
     const float DistToSurface = FVector::Dist(GetActorLocation(), ClosestPoint);
     const float DistToCenter = FVector::Dist(TargetActor->GetActorLocation(), GetActorLocation());
 

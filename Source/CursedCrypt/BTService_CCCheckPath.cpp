@@ -153,7 +153,8 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	{
 		FVector ObsOrigin, ObsExtents;
 		BlockingObstacle->GetActorBounds(true, ObsOrigin, ObsExtents);
-		const FVector ClosestObsPt = FMath::ClosestPointOnBoxToPoint(StartLoc, ObsOrigin, ObsExtents);
+		const FBox ObsBox(ObsOrigin - ObsExtents, ObsOrigin + ObsExtents);
+		const FVector ClosestObsPt = ObsBox.GetClosestPointTo(StartLoc);
 		const float DistToObs = FVector::Dist(StartLoc, ClosestObsPt);
 
 		if (DistToObs <= 250.0f)
@@ -366,7 +367,8 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		{
 			FVector ObsOrigin, ObsExtents;
 			Candidate->GetActorBounds(true, ObsOrigin, ObsExtents);
-			const FVector ClosestPt = FMath::ClosestPointOnBoxToPoint(PawnLoc, ObsOrigin, ObsExtents);
+			const FBox CandBox(ObsOrigin - ObsExtents, ObsOrigin + ObsExtents);
+			const FVector ClosestPt = CandBox.GetClosestPointTo(PawnLoc);
 			const float DistFromPawn = FVector::Dist(PawnLoc, ClosestPt);
 			const float DistToTarget = FVector::Dist(ClosestPt, TargetLoc);
 
