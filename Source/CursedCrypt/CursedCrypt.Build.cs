@@ -15,6 +15,7 @@ public class CursedCrypt : ModuleRules
             "InputCore",
             "EnhancedInput",
             "AIModule",
+            "NavigationSystem",
             "StateTreeModule",
             "GameplayStateTreeModule",
             "UMG",
