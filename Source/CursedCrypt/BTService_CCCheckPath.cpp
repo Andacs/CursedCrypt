@@ -45,23 +45,8 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	if (!ControlledPawn || !BlackboardComp) return;
 
 	// 1. Retrieve TargetActor from Blackboard (using inherited BlackboardKey)
+	// TargetActor ALWAYS represents the Player. We never overwrite TargetActor.
 	AActor* TargetActor = Cast<AActor>(BlackboardComp->GetValueAsObject(GetSelectedBlackboardKey()));
-
-	// Cache player target when the current target is an alive character (not an obstacle)
-	float HealthCheck = 0.0f;
-	if (TargetActor && !IsActorBreakable(TargetActor, HealthCheck))
-	{
-		CachedPlayerTarget = TargetActor;
-	}
-	else if (!TargetActor && CachedPlayerTarget.IsValid())
-	{
-		// If perception dropped the player because of a thin wall, retain player if within reasonable range
-		if (FVector::Dist(ControlledPawn->GetActorLocation(), CachedPlayerTarget->GetActorLocation()) < 2000.0f)
-		{
-			TargetActor = CachedPlayerTarget.Get();
-			BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), TargetActor);
-		}
-	}
 
 	if (!TargetActor)
 	{
@@ -86,9 +71,7 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 	const FVector StartLoc = ControlledPawn->GetActorLocation();
-	// Always calculate destination towards the true target (Player)
-	AActor* GoalActor = (CachedPlayerTarget.IsValid() && IsValid(CachedPlayerTarget.Get())) ? CachedPlayerTarget.Get() : TargetActor;
-	const FVector TargetLoc = GoalActor->GetActorLocation();
+	const FVector TargetLoc = TargetActor->GetActorLocation();
 
 	// 2. Synchronous pathfinding query for detour path to the player
 	FPathFindingQuery Query(ControlledPawn, *NavSys->GetDefaultNavDataInstance(), StartLoc, TargetLoc);
@@ -104,7 +87,7 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 	// 3. Detect any blocking breakable obstacle along the corridor or partial path
-	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, GoalActor, PathResult);
+	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, TargetActor, PathResult);
 
 	float BreakTime = FLT_MAX;
 	float ObstacleHealth = 100.0f;
@@ -123,27 +106,19 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 	// 4. Decision with Hysteresis (Stability Threshold)
+	// BlockerBarricadeKey is set when breaking is preferred/required; cleared when detouring or path is open.
 	UObject* CurrentBlockerObj = BlackboardComp->GetValueAsObject(BlockerBarricadeKey.SelectedKeyName);
 	AActor* CurrentBlocker = Cast<AActor>(CurrentBlockerObj);
 
-	// Helper to apply decision to both BlockerBarricade and TargetActor (if redirection is enabled)
 	auto ApplyDecision = [&](AActor* ChosenBlocker)
 	{
 		if (ChosenBlocker)
 		{
 			BlackboardComp->SetValueAsObject(BlockerBarricadeKey.SelectedKeyName, ChosenBlocker);
-			if (bRedirectTargetActor)
-			{
-				BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), ChosenBlocker);
-			}
 		}
 		else
 		{
 			BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
-			if (bRedirectTargetActor && CachedPlayerTarget.IsValid())
-			{
-				BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), CachedPlayerTarget.Get());
-			}
 		}
 	};
 
@@ -160,11 +135,6 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		if (DistToObs <= 250.0f)
 		{
 			bInMeleeRangeOfObstacle = true;
-			// Trigger melee attack immediately so enemy doesn't get stuck in MoveTo
-			if (ACCEnemyCharacter* EnemyChar = Cast<ACCEnemyCharacter>(ControlledPawn))
-			{
-				EnemyChar->TryAttack(BlockingObstacle);
-			}
 		}
 	}
 
@@ -372,31 +342,27 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 			const float DistFromPawn = FVector::Dist(PawnLoc, ClosestPt);
 			const float DistToTarget = FVector::Dist(ClosestPt, TargetLoc);
 
-			// Wall Check: Ensure candidate is not walled off behind an impenetrable static wall from both sides!
-			FHitResult LosHit;
-			FCollisionQueryParams LosPawn(SCENE_QUERY_STAT(CheckBarricadePawnLOS), false);
-			LosPawn.AddIgnoredActor(Candidate);
-			LosPawn.AddIgnoredActor(ControlledPawn);
-
-			const FVector CandEye = ClosestPt + FVector(0.0f, 0.0f, 50.0f);
-			const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
-			const FVector TargetEye = TargetLoc + FVector(0.0f, 0.0f, 50.0f);
-
-			const bool bBlockedFromPawn = (DistFromPawn > 250.0f) && World->LineTraceSingleByChannel(
-				LosHit, CandEye, PawnEye, ECC_Visibility, LosPawn
-			);
-
-			FCollisionQueryParams LosTarget(SCENE_QUERY_STAT(CheckBarricadeTargetLOS), false);
-			LosTarget.AddIgnoredActor(Candidate);
-			LosTarget.AddIgnoredActor(TargetActor);
-			const bool bBlockedFromTarget = World->LineTraceSingleByChannel(
-				LosHit, CandEye, TargetEye, ECC_Visibility, LosTarget
-			);
-
-			// If candidate is behind solid walls from BOTH Pawn and Target, it belongs to another room/corridor!
-			if (bBlockedFromPawn && bBlockedFromTarget)
+			// Wall Check: Only skip if candidate is walled off behind an impenetrable solid wall from the Pawn
+			if (DistFromPawn > 250.0f)
 			{
-				continue;
+				FHitResult Hit;
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(CheckCandidateLOS), false);
+				Params.AddIgnoredActor(ControlledPawn);
+				Params.AddIgnoredActor(Candidate);
+
+				const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
+				const FVector CandCenter = ObsOrigin;
+
+				if (World->LineTraceSingleByChannel(Hit, PawnEye, CandCenter, ECC_Visibility, Params))
+				{
+					AActor* HitActor = Hit.GetActor();
+					float DummyHP = 0.0f;
+					if (HitActor && !IsActorBreakable(HitActor, DummyHP))
+					{
+						// Separated by an unbreakable solid wall, skip this candidate
+						continue;
+					}
+				}
 			}
 
 			// If obstacle is right in front of the enemy, drastically lower cost so it is picked first

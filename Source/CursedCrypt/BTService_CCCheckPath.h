@@ -30,14 +30,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector BlockerBarricadeKey;
 
-	/** If true, when a blocking barricade is chosen, automatically redirects TargetActor key to the barricade so existing MoveTo/Attack nodes work without changing Behavior Tree layout. Restores TargetActor when barricade is broken. */
-	UPROPERTY(EditAnywhere, Category = "Blackboard")
-	bool bRedirectTargetActor = true;
-
-	/** Internal cache of original player target when TargetActor is redirected to a barricade. */
-	UPROPERTY(Transient)
-	TWeakObjectPtr<AActor> CachedPlayerTarget;
-
 	// --- Time & Cost Settings ---
 	/** Minimum time difference required to switch between detour and break decisions (prevents oscillation / jitter). */
 	UPROPERTY(EditAnywhere, Category = "Cost Evaluation", meta = (ClampMin = "0.0"))

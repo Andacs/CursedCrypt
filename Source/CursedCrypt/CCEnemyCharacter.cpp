@@ -55,9 +55,20 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
         if (World->LineTraceSingleByChannel(Hit, EyeLoc, TraceEnd, ECC_Visibility, TraceParams))
         {
             AActor* HitActor = Hit.GetActor();
-            if (HitActor && !HitActor->ActorHasTag(TEXT("Barricade")) && !HitActor->ActorHasTag(TEXT("Breakable")) && !HitActor->GetName().Contains(TEXT("Barricade")))
+            if (HitActor && HitActor != TargetActor && HitActor->GetAttachParentActor() != TargetActor)
             {
-                return false;
+                // Unbreakable solid wall check:
+                // If it is NOT a pawn and does NOT have an AttributeComponent (meaning it's unbreakable world geometry)
+                const bool bIsSolidWall = !HitActor->IsA<APawn>()
+                    && (HitActor->FindComponentByClass<UAttributeComponent>() == nullptr)
+                    && !HitActor->ActorHasTag(TEXT("Barricade"))
+                    && !HitActor->ActorHasTag(TEXT("Breakable"))
+                    && !HitActor->GetName().Contains(TEXT("Barricade"));
+
+                if (bIsSolidWall)
+                {
+                    return false;
+                }
             }
         }
     }
@@ -68,8 +79,8 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
         if (!AnimInstance->Montage_IsPlaying(AttackMontage))
         {
             AnimInstance->Montage_Play(AttackMontage);
-            return true;
         }
+        return true;
     }
 
     return false;
