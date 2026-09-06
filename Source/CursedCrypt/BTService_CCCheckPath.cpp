@@ -45,6 +45,23 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 
 	// 1. Retrieve TargetActor from Blackboard (using inherited BlackboardKey)
 	AActor* TargetActor = Cast<AActor>(BlackboardComp->GetValueAsObject(GetSelectedBlackboardKey()));
+
+	// Cache player target when the current target is an alive character (not an obstacle)
+	float HealthCheck = 0.0f;
+	if (TargetActor && !IsActorBreakable(TargetActor, HealthCheck))
+	{
+		CachedPlayerTarget = TargetActor;
+	}
+	else if (!TargetActor && CachedPlayerTarget.IsValid())
+	{
+		// If perception dropped the player because of a thin wall, retain player if within reasonable range
+		if (FVector::Dist(ControlledPawn->GetActorLocation(), CachedPlayerTarget->GetActorLocation()) < 2000.0f)
+		{
+			TargetActor = CachedPlayerTarget.Get();
+			BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), TargetActor);
+		}
+	}
+
 	if (!TargetActor)
 	{
 		BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
@@ -68,9 +85,11 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 	const FVector StartLoc = ControlledPawn->GetActorLocation();
-	const FVector TargetLoc = TargetActor->GetActorLocation();
+	// Always calculate destination towards the true target (Player)
+	AActor* GoalActor = (CachedPlayerTarget.IsValid() && IsValid(CachedPlayerTarget.Get())) ? CachedPlayerTarget.Get() : TargetActor;
+	const FVector TargetLoc = GoalActor->GetActorLocation();
 
-	// 2. Synchronous pathfinding query for detour path
+	// 2. Synchronous pathfinding query for detour path to the player
 	FPathFindingQuery Query(ControlledPawn, *NavSys->GetDefaultNavDataInstance(), StartLoc, TargetLoc);
 	FPathFindingResult PathResult = NavSys->FindPathSync(Query);
 
@@ -84,7 +103,7 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	}
 
 	// 3. Detect any blocking breakable obstacle along the corridor or partial path
-	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, TargetActor, PathResult);
+	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, GoalActor, PathResult);
 
 	float BreakTime = FLT_MAX;
 	float ObstacleHealth = 100.0f;
@@ -106,17 +125,31 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 	UObject* CurrentBlockerObj = BlackboardComp->GetValueAsObject(BlockerBarricadeKey.SelectedKeyName);
 	AActor* CurrentBlocker = Cast<AActor>(CurrentBlockerObj);
 
-	// Condition 1: No complete detour path exists (full block / dead-end)
-	if (!bHasCompletePath)
+	// Helper to apply decision to both BlockerBarricade and TargetActor (if redirection is enabled)
+	auto ApplyDecision = [&](AActor* ChosenBlocker)
 	{
-		if (BlockingObstacle)
+		if (ChosenBlocker)
 		{
-			BlackboardComp->SetValueAsObject(BlockerBarricadeKey.SelectedKeyName, BlockingObstacle);
+			BlackboardComp->SetValueAsObject(BlockerBarricadeKey.SelectedKeyName, ChosenBlocker);
+			if (bRedirectTargetActor)
+			{
+				BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), ChosenBlocker);
+			}
 		}
 		else
 		{
 			BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
+			if (bRedirectTargetActor && CachedPlayerTarget.IsValid())
+			{
+				BlackboardComp->SetValueAsObject(GetSelectedBlackboardKey(), CachedPlayerTarget.Get());
+			}
 		}
+	};
+
+	// Condition 1: No complete detour path exists (full block / dead-end)
+	if (!bHasCompletePath)
+	{
+		ApplyDecision(BlockingObstacle);
 		return;
 	}
 
@@ -129,11 +162,11 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 			// Stay targeting the barricade UNLESS Detour is faster by more than TimeTolerance
 			if (DetourTime < (BreakTime - TimeTolerance))
 			{
-				BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
+				ApplyDecision(nullptr);
 			}
 			else
 			{
-				BlackboardComp->SetValueAsObject(BlockerBarricadeKey.SelectedKeyName, BlockingObstacle);
+				ApplyDecision(BlockingObstacle);
 			}
 		}
 		else
@@ -142,18 +175,18 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 			// Stay detouring UNLESS Breaking is faster by more than TimeTolerance
 			if (BreakTime < (DetourTime - TimeTolerance))
 			{
-				BlackboardComp->SetValueAsObject(BlockerBarricadeKey.SelectedKeyName, BlockingObstacle);
+				ApplyDecision(BlockingObstacle);
 			}
 			else
 			{
-				BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
+				ApplyDecision(nullptr);
 			}
 		}
 	}
 	else
 	{
 		// Path is clear or no breakable obstacle exists -> Detour/direct to target
-		BlackboardComp->ClearValue(BlockerBarricadeKey.SelectedKeyName);
+		ApplyDecision(nullptr);
 	}
 
 #if WITH_EDITOR
@@ -295,6 +328,34 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 		if (IsActorBreakable(Candidate, ObstacleHP))
 		{
 			const FVector CandLoc = Candidate->GetActorLocation();
+
+			// Wall Check: Ensure candidate is not walled off behind an impenetrable static wall from both sides!
+			FHitResult LosHit;
+			FCollisionQueryParams LosParams(SCENE_QUERY_STAT(CheckBarricadeLOS), false);
+			LosParams.AddIgnoredActor(Candidate);
+			LosParams.AddIgnoredActor(ControlledPawn);
+
+			const FVector CandEye = CandLoc + FVector(0.0f, 0.0f, 50.0f);
+			const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
+			const FVector TargetEye = TargetLoc + FVector(0.0f, 0.0f, 50.0f);
+
+			const bool bBlockedFromPawn = World->LineTraceSingleByChannel(
+				LosHit, CandEye, PawnEye, ECC_Visibility, LosParams
+			);
+
+			LosParams.ClearIgnoredActors();
+			LosParams.AddIgnoredActor(Candidate);
+			LosParams.AddIgnoredActor(TargetActor);
+			const bool bBlockedFromTarget = World->LineTraceSingleByChannel(
+				LosHit, CandEye, TargetEye, ECC_Visibility, LosParams
+			);
+
+			// If candidate is behind solid walls from BOTH Pawn and Target, it belongs to another room/corridor!
+			if (bBlockedFromPawn && bBlockedFromTarget)
+			{
+				continue;
+			}
+
 			const float Cost = FVector::Dist(PawnLoc, CandLoc) + (FVector::Dist(CandLoc, TargetLoc) * 0.5f);
 			if (Cost < BestCost)
 			{
@@ -311,6 +372,9 @@ bool UBTService_CCCheckPath::IsActorBreakable(AActor* CandidateActor, float& Out
 {
 	OutHealth = 0.0f;
 	if (!IsValid(CandidateActor)) return false;
+
+	// Critical: Pawns (Player or Enemy characters) are NEVER breakable obstacles!
+	if (CandidateActor->IsA<APawn>()) return false;
 
 	// 1. Prefer AttributeComponent (health system)
 	if (UAttributeComponent* Attr = CandidateActor->FindComponentByClass<UAttributeComponent>())

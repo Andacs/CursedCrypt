@@ -31,6 +31,24 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
     const float Dist = FVector::Dist(TargetActor->GetActorLocation(), GetActorLocation());
     if (Dist > AttackRange) return false;
 
+    // Line of sight check: do not attack through solid walls
+    if (UWorld* World = GetWorld())
+    {
+        FHitResult Hit;
+        FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(EnemyAttackLOS), false);
+        TraceParams.AddIgnoredActor(this);
+        TraceParams.AddIgnoredActor(TargetActor);
+
+        const FVector EyeLoc = GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
+        const FVector TargetCenter = TargetActor->GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
+
+        if (World->LineTraceSingleByChannel(Hit, EyeLoc, TargetCenter, ECC_Visibility, TraceParams))
+        {
+            // Blocked by a solid wall/geometry between attacker and target
+            return false;
+        }
+    }
+
     // Play attack montage.
     if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
     {
