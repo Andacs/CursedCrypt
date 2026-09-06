@@ -37,7 +37,7 @@ protected:
 
 	/** Estimated damage per second of the enemy against breakable obstacles. */
 	UPROPERTY(EditAnywhere, Category = "Cost Evaluation", meta = (ClampMin = "1.0"))
-	float DefaultEnemyDPS = 20.0f;
+	float DefaultEnemyDPS = 40.0f;
 
 	// --- Detection Settings ---
 	/** Sphere sweep radius used to detect blocking breakables along path endpoints and corridors. */
@@ -58,7 +58,7 @@ protected:
 
 private:
 	/** Finds the closest breakable actor obstructing the path to TargetActor. */
-	AActor* FindBlockingBreakable(APawn* ControlledPawn, AActor* TargetActor, const FPathFindingResult& PathResult) const;
+	AActor* FindBlockingBreakable(APawn* ControlledPawn, AActor* TargetActor, const FPathFindingResult& PathResult, AActor* CurrentBlocker = nullptr) const;
 
 	/** Checks if candidate actor has an alive AttributeComponent or implements combat interface. */
 	bool IsActorBreakable(AActor* CandidateActor, float& OutHealth) const;

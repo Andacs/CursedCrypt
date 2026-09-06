@@ -86,11 +86,17 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		DetourTime = PathLen / WalkSpeed;
 	}
 
-	// 3. Detect any blocking breakable obstacle along the corridor or partial path
-	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, TargetActor, PathResult);
+	// 3. Current Blocker from Blackboard (used for commitment and candidate retention)
+	UObject* CurrentBlockerObj = BlackboardComp->GetValueAsObject(BlockerBarricadeKey.SelectedKeyName);
+	AActor* CurrentBlocker = Cast<AActor>(CurrentBlockerObj);
+
+	// Detect any blocking breakable obstacle along the corridor or partial path
+	AActor* BlockingObstacle = FindBlockingBreakable(ControlledPawn, TargetActor, PathResult, CurrentBlocker);
 
 	float BreakTime = FLT_MAX;
 	float ObstacleHealth = 100.0f;
+	float DistToObs = FLT_MAX;
+
 	if (BlockingObstacle)
 	{
 		IsActorBreakable(BlockingObstacle, ObstacleHealth);
@@ -98,17 +104,18 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		const float DPS = FMath::Max(1.0f, DefaultEnemyDPS);
 		const float TimeToBreak = ObstacleHealth / DPS;
 
-		const float DistToObstacle = FVector::Dist(StartLoc, BlockingObstacle->GetActorLocation());
-		const float DistObstacleToTarget = FVector::Dist(BlockingObstacle->GetActorLocation(), TargetLoc);
-		const float DirectWalkTime = (DistToObstacle + DistObstacleToTarget) / WalkSpeed;
+		FVector ObsOrigin, ObsExtents;
+		BlockingObstacle->GetActorBounds(true, ObsOrigin, ObsExtents);
+		const FBox ObsBox(ObsOrigin - ObsExtents, ObsOrigin + ObsExtents);
+		const FVector ClosestToPawn = ObsBox.GetClosestPointTo(StartLoc);
+		const FVector ClosestToTarget = ObsBox.GetClosestPointTo(TargetLoc);
+
+		DistToObs = FVector::Dist(StartLoc, ClosestToPawn);
+		const float DistObstacleToTarget = FVector::Dist(ClosestToTarget, TargetLoc);
+		const float DirectWalkTime = (DistToObs + DistObstacleToTarget) / WalkSpeed;
 
 		BreakTime = DirectWalkTime + TimeToBreak;
 	}
-
-	// 4. Decision with Hysteresis (Stability Threshold)
-	// BlockerBarricadeKey is set when breaking is preferred/required; cleared when detouring or path is open.
-	UObject* CurrentBlockerObj = BlackboardComp->GetValueAsObject(BlockerBarricadeKey.SelectedKeyName);
-	AActor* CurrentBlocker = Cast<AActor>(CurrentBlockerObj);
 
 	auto ApplyDecision = [&](AActor* ChosenBlocker)
 	{
@@ -122,35 +129,28 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 		}
 	};
 
-	// Proximity check: If the enemy is already in front of a blocking obstacle (within 250 units), prioritize breaking it!
-	bool bInMeleeRangeOfObstacle = false;
-	if (BlockingObstacle && IsValid(BlockingObstacle))
-	{
-		FVector ObsOrigin, ObsExtents;
-		BlockingObstacle->GetActorBounds(true, ObsOrigin, ObsExtents);
-		const FBox ObsBox(ObsOrigin - ObsExtents, ObsOrigin + ObsExtents);
-		const FVector ClosestObsPt = ObsBox.GetClosestPointTo(StartLoc);
-		const float DistToObs = FVector::Dist(StartLoc, ClosestObsPt);
-
-		if (DistToObs <= 250.0f)
-		{
-			bInMeleeRangeOfObstacle = true;
-		}
-	}
-
-	// Condition 1: No complete detour path exists OR enemy is already in front of the barricade
-	if (!bHasCompletePath || bInMeleeRangeOfObstacle)
+	// Condition 1: Path is completely blocked (no detour path exists)
+	if (!bHasCompletePath)
 	{
 		ApplyDecision(BlockingObstacle);
 		return;
 	}
 
-	// Both Detour and Break are possible -> Compare costs
+	// ACTION COMMITMENT:
+	// If the AI is already targeting this obstacle and is within 400 units (approach/melee range),
+	// COMMIT to breaking it! Do not abandon a barricade once you've arrived at it.
+	if (CurrentBlocker != nullptr && BlockingObstacle == CurrentBlocker && DistToObs <= 400.0f)
+	{
+		ApplyDecision(BlockingObstacle);
+		return;
+	}
+
+	// Both Detour and Break are possible -> Compare costs with Hysteresis
 	if (BlockingObstacle && BreakTime < FLT_MAX)
 	{
 		if (CurrentBlocker != nullptr)
 		{
-			// AI is already targeting the barricade:
+			// AI is currently targeting a barricade from further away:
 			// Stay targeting the barricade UNLESS Detour is faster by more than TimeTolerance
 			if (DetourTime < (BreakTime - TimeTolerance))
 			{
@@ -214,7 +214,7 @@ void UBTService_CCCheckPath::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* 
 #endif
 }
 
-AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AActor* TargetActor, const FPathFindingResult& PathResult) const
+AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AActor* TargetActor, const FPathFindingResult& PathResult, AActor* CurrentBlocker) const
 {
 	UWorld* World = ControlledPawn->GetWorld();
 	if (!World) return nullptr;
@@ -228,6 +228,12 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 
 	const FVector PawnLoc = ControlledPawn->GetActorLocation();
 	const FVector TargetLoc = TargetActor->GetActorLocation();
+
+	// 0. Always retain the current blocker if valid so the AI doesn't drop it due to sweep boundaries
+	if (CurrentBlocker && IsValid(CurrentBlocker))
+	{
+		Candidates.Add(CurrentBlocker);
+	}
 
 	// 1. Search around TargetActor (catches barricades enclosing or guarding the player)
 	TArray<FOverlapResult> TargetOverlaps;
@@ -342,8 +348,9 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 			const float DistFromPawn = FVector::Dist(PawnLoc, ClosestPt);
 			const float DistToTarget = FVector::Dist(ClosestPt, TargetLoc);
 
-			// Wall Check: Only skip if candidate is walled off behind an impenetrable solid wall from the Pawn
-			if (DistFromPawn > 250.0f)
+			// Wall Check: Only skip if candidate is walled off behind an impenetrable solid wall from the Pawn.
+			// Never skip CurrentBlocker that the AI is already engaged with!
+			if (Candidate != CurrentBlocker && DistFromPawn > 250.0f)
 			{
 				FHitResult Hit;
 				FCollisionQueryParams Params(SCENE_QUERY_STAT(CheckCandidateLOS), false);
@@ -351,25 +358,35 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 				Params.AddIgnoredActor(Candidate);
 
 				const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
-				const FVector CandCenter = ObsOrigin;
+				// Aim at upper portion of obstacle so ray doesn't angle down into floor
+				const FVector CandTarget = ObsOrigin + FVector(0.0f, 0.0f, FMath::Clamp(ObsExtents.Z * 0.5f, 20.0f, 60.0f));
 
-				if (World->LineTraceSingleByChannel(Hit, PawnEye, CandCenter, ECC_Visibility, Params))
+				if (World->LineTraceSingleByChannel(Hit, PawnEye, CandTarget, ECC_Visibility, Params))
 				{
 					AActor* HitActor = Hit.GetActor();
 					float DummyHP = 0.0f;
-					if (HitActor && !IsActorBreakable(HitActor, DummyHP))
+					// Only treat as solid wall if it's NOT breakable, NOT a pawn, it is a vertical surface (not floor),
+					// and the hit is not just the doorframe right next to the obstacle
+					const bool bIsVerticalSurface = FMath::Abs(Hit.ImpactNormal.Z) < 0.7f;
+					const bool bHitFarFromObstacle = Hit.Distance < (DistFromPawn - 150.0f);
+
+					if (HitActor && !HitActor->IsA<APawn>() && !IsActorBreakable(HitActor, DummyHP) && bIsVerticalSurface && bHitFarFromObstacle)
 					{
-						// Separated by an unbreakable solid wall, skip this candidate
+						// Candidate is truly behind an impenetrable solid wall in another room
 						continue;
 					}
 				}
 			}
 
-			// If obstacle is right in front of the enemy, drastically lower cost so it is picked first
+			// Cost calculation: CurrentBlocker gets a sticky preference to prevent jitter
 			float Cost = DistFromPawn + (DistToTarget * 0.5f);
-			if (DistFromPawn <= 250.0f)
+			if (Candidate == CurrentBlocker)
 			{
-				Cost = DistFromPawn * 0.05f; // Absolute priority!
+				Cost *= 0.5f; // Strong preference to stick to current target
+			}
+			if (DistFromPawn <= 350.0f)
+			{
+				Cost = DistFromPawn * 0.05f; // Absolute proximity priority!
 			}
 
 			if (Cost < BestCost)
