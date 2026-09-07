@@ -44,31 +44,47 @@ bool ACCEnemyCharacter::TryAttack(AActor* TargetActor)
     // Line of sight check: do not attack through solid unbreakable walls
     if (UWorld* World = GetWorld())
     {
-        FHitResult Hit;
         FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(EnemyAttackLOS), false);
         TraceParams.AddIgnoredActor(this);
         TraceParams.AddIgnoredActor(TargetActor);
 
-        const FVector EyeLoc = GetActorLocation() + FVector(0.0f, 0.0f, 50.0f);
-        const FVector TraceEnd = ClosestPoint + FVector(0.0f, 0.0f, 30.0f);
+        FCollisionObjectQueryParams ObjectParams;
+        ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+        ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+        ObjectParams.AddObjectTypesToQuery(ECC_PhysicsBody);
 
-        if (World->LineTraceSingleByChannel(Hit, EyeLoc, TraceEnd, ECC_Visibility, TraceParams))
+        auto IsHitSolidWall = [&](const FHitResult& InHit) -> bool
         {
-            AActor* HitActor = Hit.GetActor();
-            if (HitActor && HitActor != TargetActor && HitActor->GetAttachParentActor() != TargetActor)
-            {
-                // Unbreakable solid wall check:
-                // If it is NOT a pawn and does NOT have an AttributeComponent (meaning it's unbreakable world geometry)
-                const bool bIsSolidWall = !HitActor->IsA<APawn>()
-                    && (HitActor->FindComponentByClass<UAttributeComponent>() == nullptr)
-                    && !HitActor->ActorHasTag(TEXT("Barricade"))
-                    && !HitActor->ActorHasTag(TEXT("Breakable"))
-                    && !HitActor->GetName().Contains(TEXT("Barricade"));
+            if (!InHit.bBlockingHit) return false;
+            AActor* HitActor = InHit.GetActor();
+            // If actor is null, this is level geometry (BSP / static geometry) -> solid wall!
+            if (!HitActor) return true;
+            if (HitActor == TargetActor || HitActor->GetAttachParentActor() == TargetActor) return false;
+            if (HitActor->IsA<APawn>()) return false;
 
-                if (bIsSolidWall)
-                {
-                    return false;
-                }
+            const bool bIsBreakable = (HitActor->FindComponentByClass<UAttributeComponent>() != nullptr)
+                || HitActor->ActorHasTag(TEXT("Barricade"))
+                || HitActor->ActorHasTag(TEXT("Breakable"))
+                || HitActor->GetName().Contains(TEXT("Barricade"));
+
+            return !bIsBreakable;
+        };
+
+        // Check at multiple heights: Eye (+50), Chest (+15), and Pelvis/Low (-20)
+        const float CheckHeights[] = { 50.0f, 15.0f, -20.0f };
+        for (float H : CheckHeights)
+        {
+            const FVector Start = GetActorLocation() + FVector(0.0f, 0.0f, H);
+            const FVector End = ClosestPoint + FVector(0.0f, 0.0f, H);
+
+            FHitResult HitObj, HitChan;
+            if (World->LineTraceSingleByObjectType(HitObj, Start, End, ObjectParams, TraceParams) && IsHitSolidWall(HitObj))
+            {
+                return false;
+            }
+            if (World->LineTraceSingleByChannel(HitChan, Start, End, ECC_Visibility, TraceParams) && IsHitSolidWall(HitChan))
+            {
+                return false;
             }
         }
     }

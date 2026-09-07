@@ -350,31 +350,45 @@ AActor* UBTService_CCCheckPath::FindBlockingBreakable(APawn* ControlledPawn, AAc
 
 			// Wall Check: Only skip if candidate is walled off behind an impenetrable solid wall from the Pawn.
 			// Never skip CurrentBlocker that the AI is already engaged with!
-			if (Candidate != CurrentBlocker && DistFromPawn > 250.0f)
+			if (Candidate != CurrentBlocker && DistFromPawn > 80.0f)
 			{
 				FHitResult Hit;
 				FCollisionQueryParams Params(SCENE_QUERY_STAT(CheckCandidateLOS), false);
 				Params.AddIgnoredActor(ControlledPawn);
 				Params.AddIgnoredActor(Candidate);
 
+				FCollisionObjectQueryParams ObjParams;
+				ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+
 				const FVector PawnEye = PawnLoc + FVector(0.0f, 0.0f, 50.0f);
 				// Aim at upper portion of obstacle so ray doesn't angle down into floor
 				const FVector CandTarget = ObsOrigin + FVector(0.0f, 0.0f, FMath::Clamp(ObsExtents.Z * 0.5f, 20.0f, 60.0f));
 
-				if (World->LineTraceSingleByChannel(Hit, PawnEye, CandTarget, ECC_Visibility, Params))
+				auto IsSolidWallHit = [&](const FHitResult& H) -> bool
 				{
-					AActor* HitActor = Hit.GetActor();
-					float DummyHP = 0.0f;
-					// Only treat as solid wall if it's NOT breakable, NOT a pawn, it is a vertical surface (not floor),
-					// and the hit is not just the doorframe right next to the obstacle
-					const bool bIsVerticalSurface = FMath::Abs(Hit.ImpactNormal.Z) < 0.7f;
-					const bool bHitFarFromObstacle = Hit.Distance < (DistFromPawn - 150.0f);
-
-					if (HitActor && !HitActor->IsA<APawn>() && !IsActorBreakable(HitActor, DummyHP) && bIsVerticalSurface && bHitFarFromObstacle)
+					if (!H.bBlockingHit) return false;
+					AActor* HitActor = H.GetActor();
+					// If HitActor is null, it is level geometry -> solid wall
+					if (!HitActor)
 					{
-						// Candidate is truly behind an impenetrable solid wall in another room
-						continue;
+						const bool bIsVerticalSurface = FMath::Abs(H.ImpactNormal.Z) < 0.7f;
+						const bool bHitFarFromObstacle = H.Distance < (DistFromPawn - 50.0f);
+						return bIsVerticalSurface && bHitFarFromObstacle;
 					}
+					if (HitActor == ControlledPawn || HitActor == Candidate) return false;
+					if (HitActor->IsA<APawn>()) return false;
+
+					float DummyHP = 0.0f;
+					const bool bIsVerticalSurface = FMath::Abs(H.ImpactNormal.Z) < 0.7f;
+					const bool bHitFarFromObstacle = H.Distance < (DistFromPawn - 50.0f);
+					return !IsActorBreakable(HitActor, DummyHP) && bIsVerticalSurface && bHitFarFromObstacle;
+				};
+
+				if ((World->LineTraceSingleByObjectType(Hit, PawnEye, CandTarget, ObjParams, Params) && IsSolidWallHit(Hit)) ||
+					(World->LineTraceSingleByChannel(Hit, PawnEye, CandTarget, ECC_Visibility, Params) && IsSolidWallHit(Hit)))
+				{
+					// Candidate is truly behind an impenetrable solid wall in another room
+					continue;
 				}
 			}
 

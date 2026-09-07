@@ -1,5 +1,8 @@
 #include "AttributeComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
+#include "Engine/World.h"
+#include "CollisionQueryParams.h"
 #include "Net/UnrealNetwork.h"
 
 UAttributeComponent::UAttributeComponent()
@@ -52,6 +55,47 @@ bool UAttributeComponent::ApplyDamage(AActor* InstigatorActor, float DamageAmoun
 	if (!GetOwner()->HasAuthority()) return false;
 
 	if (DamageAmount <= 0.f || !IsAlive()) return false;
+
+	// Solid wall protection: if damage is dealt by an external actor (melee/ranged),
+	// ensure there is no solid unbreakable wall between InstigatorActor and this victim actor.
+	if (InstigatorActor && InstigatorActor != GetOwner())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			FHitResult Hit;
+			FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(DamageWallLOS), false);
+			TraceParams.AddIgnoredActor(InstigatorActor);
+			TraceParams.AddIgnoredActor(GetOwner());
+
+			FCollisionObjectQueryParams ObjParams;
+			ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+
+			auto IsSolidWall = [&](const FHitResult& InHit) -> bool
+			{
+				if (!InHit.bBlockingHit) return false;
+				AActor* HitActor = InHit.GetActor();
+				if (!HitActor) return true; // Level geometry
+				if (HitActor == InstigatorActor || HitActor == GetOwner()) return false;
+				if (HitActor->IsA<APawn>()) return false;
+
+				const bool bIsBreakable = (HitActor->FindComponentByClass<UAttributeComponent>() != nullptr)
+					|| HitActor->ActorHasTag(TEXT("Barricade"))
+					|| HitActor->ActorHasTag(TEXT("Breakable"))
+					|| HitActor->GetName().Contains(TEXT("Barricade"));
+
+				return !bIsBreakable;
+			};
+
+			const FVector StartLoc = InstigatorActor->GetActorLocation() + FVector(0.0f, 0.0f, 20.0f);
+			const FVector EndLoc = GetOwner()->GetActorLocation() + FVector(0.0f, 0.0f, 20.0f);
+
+			if ((World->LineTraceSingleByObjectType(Hit, StartLoc, EndLoc, ObjParams, TraceParams) && IsSolidWall(Hit)) ||
+				(World->LineTraceSingleByChannel(Hit, StartLoc, EndLoc, ECC_Visibility, TraceParams) && IsSolidWall(Hit)))
+			{
+				return false; // Solid wall blocked damage!
+			}
+		}
+	}
 
 	const float OldHealth = Health;
 	Health = Clamp01(Health - DamageAmount, 0.f, MaxHealth);

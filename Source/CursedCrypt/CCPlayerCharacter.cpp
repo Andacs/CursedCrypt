@@ -142,3 +142,13 @@ void ACCPlayerCharacter::Multicast_PlayAttackAnim_Implementation()
 		}
 	}
 }
+
+float ACCPlayerCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser)
+{
+	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (HasAuthority() && Attributes && ActualDamage > 0.0f)
+	{
+		Attributes->ApplyDamage(DamageCauser, ActualDamage);
+	}
+	return ActualDamage;
+}

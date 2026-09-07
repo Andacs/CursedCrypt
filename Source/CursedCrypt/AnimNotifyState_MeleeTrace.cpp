@@ -5,6 +5,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "AttributeComponent.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
+#include "CollisionQueryParams.h"
 
 UAnimNotifyState_MeleeTrace::UAnimNotifyState_MeleeTrace()
 {
@@ -72,6 +74,8 @@ bool UAnimNotifyState_MeleeTrace::DoSphereSweep(USkeletalMeshComponent* MeshComp
 
     if (bHit)
     {
+        UWorld* World = MeshComp->GetWorld();
+
         for (const FHitResult& Hit : OutHits)
         {
             AActor* HitActor = Hit.GetActor();
@@ -79,6 +83,40 @@ bool UAnimNotifyState_MeleeTrace::DoSphereSweep(USkeletalMeshComponent* MeshComp
 
             // Friendly fire protection: same class actors do not damage each other.
             if (OwnerActor->GetClass() == HitActor->GetClass()) continue;
+
+            // Line of sight check between attacker and victim to prevent hitting through solid walls
+            if (World)
+            {
+                FHitResult WallHit;
+                FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MeleeTraceWallLOS), false);
+                WallParams.AddIgnoredActor(OwnerActor);
+                WallParams.AddIgnoredActor(HitActor);
+
+                FCollisionObjectQueryParams ObjParams;
+                ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+
+                auto IsWall = [&](const FHitResult& H) -> bool
+                {
+                    if (!H.bBlockingHit) return false;
+                    AActor* A = H.GetActor();
+                    if (!A) return true; // Level geometry
+                    if (A == OwnerActor || A == HitActor) return false;
+                    if (A->IsA<APawn>()) return false;
+                    return (A->FindComponentByClass<UAttributeComponent>() == nullptr)
+                        && !A->ActorHasTag(TEXT("Barricade"))
+                        && !A->ActorHasTag(TEXT("Breakable"))
+                        && !A->GetName().Contains(TEXT("Barricade"));
+                };
+
+                const FVector AttackerChest = OwnerActor->GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
+                const FVector VictimChest = HitActor->GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
+
+                if ((World->LineTraceSingleByObjectType(WallHit, AttackerChest, VictimChest, ObjParams, WallParams) && IsWall(WallHit)) ||
+                    (World->LineTraceSingleByChannel(WallHit, AttackerChest, VictimChest, ECC_Visibility, WallParams) && IsWall(WallHit)))
+                {
+                    continue; // A solid wall is between attacker and victim -> NO damage!
+                }
+            }
 
             // If we have not hit this actor yet in this attack:
             if (OwnerAttr->CanHitActor(HitActor))
